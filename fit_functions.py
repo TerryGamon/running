@@ -4,6 +4,15 @@ import fitparse
 import math
 import plotnine as p9
 import os
+import sys
+
+def print_progress_bar(index, total, label1, label2, label3):
+    n_bar = 50
+    progress = index / total
+    sys.stdout.write('\r')
+    sys.stdout.write(f"[{'=' * int(n_bar * progress):{n_bar}s}] {int(100 * progress)}%  {label1} {label2} {label3}")
+    sys.stdout.flush()
+
 
 # Load the FIT file
 def parse_fit(datei):
@@ -41,17 +50,32 @@ def parse_fit(datei):
     raw['sec']=raw.index
     raw['kmh']=raw['speed'].mul(3.6)
     raw['source']=datei
+    raw['datum']=pd.to_datetime(fit_date(datei))
     return raw
 
+def fit_date(datei):
+    fitfile = fitparse.FitFile(datei)
+    for record in fitfile.get_messages('file_id'):
+        datum = record.get_value('time_created')
+        #datum = datum.date()
+    return datum
+
+def fit_sport(datei):
+    fitfile = fitparse.FitFile(datei)
+
+    for record in fitfile.get_messages('session'):
+        sport = record.get_value('sport')
+    return sport
+
 def calc_summary(raw):
-    duration = raw.groupby(['km','source'])['sec'].agg(lambda x: x.iloc[-1] - x.iloc[0]).reset_index()
-    distance = raw.groupby(['km','source'])[['km','source','distance']].nth(-1).reset_index(drop=True)
+    duration = raw.groupby(['km','source','datum'])['sec'].agg(lambda x: x.iloc[-1] - x.iloc[0]).reset_index()
+    distance = raw.groupby(['km','source','datum'])[['km','source','datum','distance']].nth(-1).reset_index(drop=True)
 
     distance['diff'] = distance.groupby('source')['distance'].diff(1)
     distance['diff'] = distance['diff'].fillna(distance['distance'])
     distance = distance.drop('distance', axis=1).rename(columns={'diff':'distance'})
-    summary = raw.groupby(['km','source']).agg({'hr':'mean','step_length':'mean' ,'cadence':'mean','power':'mean'}).reset_index(drop=False)
-    summary = summary.merge(duration, on=['km','source'], how='left').merge(distance, on=['km','source'], how='left')
+    summary = raw.groupby(['km','source','datum']).agg({'hr':'mean','step_length':'mean' ,'cadence':'mean','power':'mean'}).reset_index(drop=False)
+    summary = summary.merge(duration, on=['km','source','datum'], how='left').merge(distance, on=['km','source','datum'], how='left')
     summary['sec_km'] = summary['sec'].div(summary['distance']).mul(1000)
     summary['kmh'] = (1/summary['sec_km']).mul(3600)
     summary['cadence'] = summary['cadence'].mul(2)
@@ -59,9 +83,20 @@ def calc_summary(raw):
     return summary
 
 def plotSummary_v_hr(df):
-    df = df.head(-1).tail(-1).reset_index(drop=True)
     p=(p9.ggplot(df)
-    +p9.geom_point(p9.aes(x='kmh',y='hr', color='km')))
+    +p9.geom_point(p9.aes(x='kmh',y='hr', color='jahr-monat'))
+    +p9.geom_smooth(p9.aes(x='kmh',y='hr'), method='lm', se=False, size=.5, color='darkgray')
+    +p9.scale_x_continuous(limits=[8,15])
+    +p9.facet_wrap('~km')
+    +p9.theme_bw()
+    +p9.theme(figure_size=[16,9])
+    +p9.labs(x='km/h',y='HR', title='HR vs. Geschwindigkeit nach gelaufenem km pro Monat')
+    +p9.theme(legend_key=p9.element_blank())
+    +p9.theme(legend_position='bottom',
+              legend_title=p9.element_blank())
+    +p9.theme(axis_text=p9.element_text(size=12))
+    +p9.theme(strip_text=p9.element_text(size=12))
+    )
     return p
 
 def plotSummary_v_cadence(df):
